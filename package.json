@@ -1,6 +1,6 @@
 {
   "name": "signalstore-toolkit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Production-grade utilities for NgRx Signal Store — request status, entity sync, pagination, API method factories, and search/filter pipelines.",
   "license": "MIT",
   "author": "Harsh <harsh04@users.noreply.github.com>",

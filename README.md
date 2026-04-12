@@ -21,6 +21,11 @@ npm install signalstore-toolkit
 | [`withPagination`](#withpagination) | Page state, computed helpers, navigation methods | ~35 lines per store |
 | [`createApiMethod`](#createapimethod) | `rxMethod` + `tap` + `switchMap` + `tapResponse` wiring | ~30 lines per method |
 | [`withSearchFilter`](#withsearchfilter) | Search + filter + sort computed pipeline | ~25 lines per store |
+| [`withSelectedEntity`](#withselectedentity) | Selected entity tracking with `selectedId` + `selectedEntity` computed | ~15 lines per store |
+| [`withPerOperationStatus`](#withperoperationstatus) | Per-operation `{op}Loading` / `{op}Error` for N named operations | ~50 lines per action store |
+| [`withResetState`](#withresetstate) | Reset store to initial state (logout, route change, form reset) | ~10 lines per store |
+| [`withOptimisticUpdate`](#withoptimisticupdate) | Snapshot → mutate → rollback-on-error pattern | ~25 lines per mutation |
+| [`mockSignalStore`](#mocksignalstore) | Unit test mocks with auto-spy detection (vitest/jest) | ~30 lines per test file |
 
 ---
 
@@ -332,6 +337,188 @@ const ProductStore = signalStore(
 );
 ```
 
+## `withSelectedEntity`
+
+Track which entity is selected in a list/detail view. Compose **after** `withEntities()`.
+
+```ts
+const TodoStore = signalStore(
+  { providedIn: 'root' },
+  withEntities({ entity: type<Todo>() }),
+  withSelectedEntity(),
+);
+
+store.select('todo-1');
+store.selectedEntity();   // Todo | null
+store.clearSelection();
+```
+
+For named collections: `withSelectedEntity({ collection: 'products' })`.
+
+### API
+
+| Member | Type | Description |
+|--------|------|-------------|
+| `selectedId` | `Signal<EntityId \| null>` | Currently selected ID |
+| `selectedEntity` | `Signal<Entity \| null>` | Computed from entityMap |
+| `select(id)` | method | Set selection |
+| `clearSelection()` | method | Clear selection |
+
+---
+
+## `withPerOperationStatus`
+
+Generates independent loading/error tracking for N named async operations. The unique feature nobody else ships.
+
+```ts
+const TaskActionStore = signalStore(
+  { providedIn: 'root' },
+  withPerOperationStatus({ operations: ['load', 'save', 'delete'] as const }),
+  withMethods((store) => ({
+    loadTasks: rxMethod<void>(
+      pipe(
+        tap(() => store.startOp('load')),
+        switchMap(() =>
+          taskService.list().pipe(
+            tapResponse({
+              next: (tasks) => { store.endOp('load'); },
+              error: (e) => store.failOp('load', e.message),
+            }),
+          ),
+        ),
+      ),
+    ),
+  })),
+);
+```
+
+```html
+@if (store.loadState().loading) { <spinner /> }
+@if (store.saveState().error; as err) { <error [message]="err" /> }
+```
+
+### Generated per operation
+
+For each operation name (e.g. `'load'`):
+
+| Member | Type | Description |
+|--------|------|-------------|
+| `loadLoading` | `Signal<boolean>` | Loading flag |
+| `loadError` | `Signal<string \| null>` | Error message |
+| `loadState` | `Signal<{ loading, error }>` | Combined status |
+
+### Helper methods
+
+| Method | Description |
+|--------|-------------|
+| `startOp(name)` | Set loading true, clear error |
+| `endOp(name)` | Set loading false |
+| `failOp(name, msg)` | Set loading false, set error |
+
+---
+
+## `withResetState`
+
+Captures initial state on store creation, adds `resetState()` to restore it. Useful for logout, route changes, or form resets.
+
+```ts
+const FormStore = signalStore(
+  { providedIn: 'root' },
+  withState({ name: '', email: '', dirty: false }),
+  withResetState(),
+);
+
+// After user edits:
+store.resetState(); // back to { name: '', email: '', dirty: false }
+```
+
+Must be composed **after** all `withState()` calls.
+
+---
+
+## `withOptimisticUpdate`
+
+Applies a local mutation immediately, then rolls back if the server request fails.
+
+```ts
+const TodoStore = signalStore(
+  { providedIn: 'root' },
+  withState({ todos: [] as Todo[] }),
+  withOptimisticUpdate(),
+  withMethods((store) => ({
+    toggleDone(id: string) {
+      store.optimistic(
+        // 1. Mutate locally (instant UI)
+        () => patchState(store, {
+          todos: store.todos().map(t =>
+            t.id === id ? { ...t, done: !t.done } : t
+          ),
+        }),
+        // 2. Confirm on server
+        todoService.toggle(id),
+        {
+          onError: (err) => console.error('Rolled back', err),
+        },
+      );
+    },
+  })),
+);
+```
+
+### API
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `mutation` | `() => void` | Function that calls `patchState` immediately |
+| `request` | `Observable<T>` | Server request to confirm the mutation |
+| `options.onSuccess` | `(res) => void` | Called on success |
+| `options.onError` | `(err) => void` | Called after rollback on failure |
+
+---
+
+## `mockSignalStore`
+
+Testing utility that creates a mock of any signal store. Auto-detects vitest (`vi.fn()`) or jest (`jest.fn()`) for spies.
+
+```ts
+import { mockSignalStore } from 'signalstore-toolkit';
+
+const mock = mockSignalStore(TodoStore, {
+  entities: [{ id: '1', title: 'Test', done: false }],
+  isPending: false,
+  error: null,
+});
+
+// Signals work like the real store:
+mock.isPending();       // false
+mock.entities();        // [{ id: '1', ... }]
+
+// Methods are auto-spied:
+mock.load();
+expect(mock.load).toHaveBeenCalled();
+
+// Update signal values in tests:
+(mock.isPending as WritableSignal<boolean>).set(true);
+```
+
+### With TestBed
+
+```ts
+TestBed.configureTestingModule({
+  providers: [
+    { provide: TodoStore, useValue: mockSignalStore(TodoStore, { ... }) },
+  ],
+});
+```
+
+### Config
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `spyFn` | auto-detect | Custom spy factory: `() => vi.fn()` |
+
+---
+
 ## vs @angular-architects/ngrx-toolkit
 
 | Feature | signalstore-toolkit | @angular-architects/ngrx-toolkit |
@@ -342,8 +529,14 @@ const ProductStore = signalStore(
 | Pagination | `withPagination()` -- full page state + navigation | Not included |
 | API method factory | `createApiMethod()` -- rxMethod + tapResponse + loading in one config | `withDataService()` -- different approach, couples to a service class |
 | Search/filter pipeline | `withSearchFilter()` -- declarative search + sort on entities | Not included |
+| Per-operation status | `withPerOperationStatus()` -- N named operations | Not included |
+| Selected entity | `withSelectedEntity()` -- selectedId + selectedEntity | Not included |
+| Reset state | `withResetState()` -- restore initial state | Not included |
+| Optimistic updates | `withOptimisticUpdate()` -- snapshot + rollback | Not included |
+| Test mocks | `mockSignalStore()` -- auto-spy for vitest/jest | Not included |
 | DevTools integration | Not included (use ngrx-toolkit for this) | `withDevtools()` |
 | Undo/redo | Not included | `withUndoRedo()` |
+| Storage sync | Not included | `withStorageSync()` |
 
 The two libraries are complementary -- use both together for full coverage.
 
