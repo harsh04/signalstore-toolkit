@@ -332,6 +332,29 @@ const ProductStore = signalStore(
 );
 ```
 
+## vs @angular-architects/ngrx-toolkit
+
+| Feature | signalstore-toolkit | @angular-architects/ngrx-toolkit |
+|---------|--------------------|---------------------------------|
+| Request status tracking | `withRequestStatus()` -- idle/pending/fulfilled/error lifecycle | `withCallState()` -- similar concept |
+| Per-operation status | Use multiple `withRequestStatus()` with different keys (planned v0.2) | Single call state per feature |
+| Entity CRUD + live sync | `withEntitySync()` -- syncAll, upsertOne, liveUpdate from JSON | Not included |
+| Pagination | `withPagination()` -- full page state + navigation | Not included |
+| API method factory | `createApiMethod()` -- rxMethod + tapResponse + loading in one config | `withDataService()` -- different approach, couples to a service class |
+| Search/filter pipeline | `withSearchFilter()` -- declarative search + sort on entities | Not included |
+| DevTools integration | Not included (use ngrx-toolkit for this) | `withDevtools()` |
+| Undo/redo | Not included | `withUndoRedo()` |
+
+The two libraries are complementary -- use both together for full coverage.
+
+---
+
+## Examples
+
+See [examples/product-store.ts](examples/product-store.ts) for a complete store using all 5 features.
+
+---
+
 ## Compatibility
 
 | Dependency | Minimum version |
